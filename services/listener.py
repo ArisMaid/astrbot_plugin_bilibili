@@ -69,7 +69,9 @@ class DynamicListener:
         self.task_gap_secs = self._parse_float(cfg.get("task_gap_secs"), 20, minimum=0)
         self.rai = cfg.get("rai", True)
         self.node = cfg.get("node", False)
-        self.send_link_with_image = bool(cfg.get("send_link_with_image", True))
+        self.send_link = bool(
+            cfg.get("send_link", cfg.get("send_link_with_image", True))
+        )
         self.dynamic_limit = cfg.get("dynamic_limit", 5)
         self.render_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self.render_cache_limit = int(cfg.get("render_cache_limit", 32))
@@ -307,7 +309,7 @@ class DynamicListener:
             chain.extend(self._compose_plain_push(forward_data, nested=True))
 
         url = payload.url
-        if url and not nested:
+        if self.send_link and url and not nested:
             chain.append(Plain(f"\n{url}"))
         return chain
 
@@ -359,7 +361,7 @@ class DynamicListener:
             "uid": str(getattr(payload, "uid", "") or ""),
             "title": str(payload.title or ""),
             "text": self._build_plain_body(payload),
-            "url": str(payload.url or ""),
+            "url": str(payload.url or "") if self.send_link else "",
         }
         if with_action:
             ctx["action"] = PLAIN_PUSH_ACTIONS.get(render_type, "发布了新动态")
@@ -657,7 +659,7 @@ class DynamicListener:
                 timestamp = int(time.time())
                 filename = f"bilibili_dynamic_{timestamp}.jpg"
                 ls = [File(file=img_path, name=filename)]
-            self._append_image_link(ls, url)
+            self._append_link(ls, url)
             try:
                 await self._send_dynamic(
                     sub_user,
@@ -737,8 +739,8 @@ class DynamicListener:
     def _prepend_atall(chain_parts: List[Any]) -> List[Any]:
         return [AtAll(), Plain(" ")] + chain_parts
 
-    def _append_image_link(self, chain_parts: List[Any], url: str) -> None:
-        if self.send_link_with_image and url:
+    def _append_link(self, chain_parts: List[Any], url: str) -> None:
+        if self.send_link and url:
             chain_parts.append(Plain(f"\n{url}"))
 
     @staticmethod
@@ -815,7 +817,7 @@ class DynamicListener:
                 timestamp = int(time.time())
                 filename = f"bilibili_live_{timestamp}.jpg"
                 image_chain = [File(file=img_path, name=filename)]
-            self._append_image_link(image_chain, payload.url)
+            self._append_link(image_chain, payload.url)
             if with_atall:
                 image_chain = self._prepend_atall(image_chain)
             await self._send_dynamic(sub_user, image_chain, category="live")

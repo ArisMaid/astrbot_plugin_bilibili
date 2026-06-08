@@ -56,7 +56,9 @@ class Main(Star):
         self.context = context
 
         self.rai = self.cfg.get("rai", True)
-        self.send_link_with_image = bool(self.cfg.get("send_link_with_image", True))
+        self.send_link = bool(
+            self.cfg.get("send_link", self.cfg.get("send_link_with_image", True))
+        )
         self.enable_parse_miniapp = self.cfg.get("enable_parse_miniapp", True)
         self.enable_parse_BV = self.cfg.get("enable_parse_BV", True)
         self.proxy = (self.cfg.get("proxy", "") or "").strip()
@@ -229,18 +231,22 @@ class Main(Star):
             img_path = await self.renderer.render_dynamic(payload)
             if img_path:
                 chain = MessageChain().file_image(img_path)
-                if self.send_link_with_image and payload.url:
+                if self.send_link and payload.url:
                     chain = chain.message(payload.url)
                 await event.send(chain)
                 return None
             msg = "渲染图片失败了 (´;ω;`)"
             text = "\n".join(filter(None, payload.text.split("<br>")))
             chain = MessageChain().message(msg).message(text)
+            if self.send_link and payload.url:
+                chain = chain.message(payload.url)
             if avatar:
                 chain = chain.url_image(avatar)
             await event.send(chain)
             return None
         chain = [Plain(payload.text)]
+        if self.send_link and payload.url:
+            chain.append(Plain(f"\n{payload.url}"))
         if avatar:
             chain.append(Image.fromURL(avatar))
         return MessageEventResult(chain=chain, use_t2i_=False)
