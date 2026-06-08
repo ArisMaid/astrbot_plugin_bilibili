@@ -69,6 +69,7 @@ class DynamicListener:
         self.task_gap_secs = self._parse_float(cfg.get("task_gap_secs"), 20, minimum=0)
         self.rai = cfg.get("rai", True)
         self.node = cfg.get("node", False)
+        self.send_link_with_image = bool(cfg.get("send_link_with_image", True))
         self.dynamic_limit = cfg.get("dynamic_limit", 5)
         self.render_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self.render_cache_limit = int(cfg.get("render_cache_limit", 32))
@@ -656,7 +657,7 @@ class DynamicListener:
                 timestamp = int(time.time())
                 filename = f"bilibili_dynamic_{timestamp}.jpg"
                 ls = [File(file=img_path, name=filename)]
-            ls.append(Plain(f"\n{url}"))
+            self._append_image_link(ls, url)
             try:
                 await self._send_dynamic(
                     sub_user,
@@ -736,6 +737,10 @@ class DynamicListener:
     def _prepend_atall(chain_parts: List[Any]) -> List[Any]:
         return [AtAll(), Plain(" ")] + chain_parts
 
+    def _append_image_link(self, chain_parts: List[Any], url: str) -> None:
+        if self.send_link_with_image and url:
+            chain_parts.append(Plain(f"\n{url}"))
+
     @staticmethod
     def _parse_live_start_timestamp(live_room: Dict[str, Any]) -> int:
         try:
@@ -805,17 +810,12 @@ class DynamicListener:
         if img_path:
             platform_name = self._resolve_platform_name(sub_user)
             if is_height_valid(img_path, platform_name):
-                image_chain = [
-                    Image.fromFileSystem(img_path),
-                    Plain(f"\n{payload.url}"),
-                ]
+                image_chain = [Image.fromFileSystem(img_path)]
             else:
                 timestamp = int(time.time())
                 filename = f"bilibili_live_{timestamp}.jpg"
-                image_chain = [
-                    File(file=img_path, name=filename),
-                    Plain(f"\n{payload.url}"),
-                ]
+                image_chain = [File(file=img_path, name=filename)]
+            self._append_image_link(image_chain, payload.url)
             if with_atall:
                 image_chain = self._prepend_atall(image_chain)
             await self._send_dynamic(sub_user, image_chain, category="live")

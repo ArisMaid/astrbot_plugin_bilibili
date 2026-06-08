@@ -49,6 +49,12 @@
         "options": ["template_1", "template_2", "simple"],
         "default": "template_2"
     },
+    "send_link_with_image": {
+        "description": "send_link_with_image",
+        "type": "bool",
+        "hint": "以图片形式推送成功时，是否同时发送相关链接",
+        "default": true
+    },
     "node": {
         "description": "node",
         "type": "bool",

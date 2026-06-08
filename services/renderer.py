@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 from typing import Any, Dict
 
 from astrbot.api import logger
@@ -16,6 +17,14 @@ from ..core.constant import (
 )
 from ..core.models import RenderPayload
 from ..core.utils import create_qrcode, image_to_base64, parse_rich_text
+
+DEFAULT_VIEWPORT_WIDTH = 800
+MIN_VIEWPORT_HEIGHT = 1
+VIEWPORT_WIDTH_RE = re.compile(
+    r'<meta\s+[^>]*name=["\']viewport["\'][^>]*'
+    r'content=["\'][^"\']*width\s*=\s*(\d+)',
+    re.IGNORECASE,
+)
 
 
 def load_template(style: str) -> str:
@@ -61,21 +70,34 @@ class Renderer:
             target_style = DEFAULT_TEMPLATE
         return self._templates.get(target_style, "")
 
-    async def render_dynamic(self, payload: RenderPayload, style: str | None = None):
-        """
-        将渲染数据字典渲染成最终图片。
-        这是该类的主要入口方法。
-        """
-        # options = {"full_page": True, "type": "png", "quality": None, "scale": "device"}
-        options = {
+    @staticmethod
+    def _resolve_viewport_width(template: str) -> int:
+        match = VIEWPORT_WIDTH_RE.search(template)
+        if not match:
+            return DEFAULT_VIEWPORT_WIDTH
+        return int(match.group(1))
+
+    @classmethod
+    def _build_screenshot_options(cls, template: str) -> Dict[str, Any]:
+        return {
             "full_page": True,
             "type": "jpeg",
             "quality": 95,
             "scale": "device",
             "device_scale_factor_level": "ultra",
+            "viewport_width": cls._resolve_viewport_width(template),
+            # Newer astrbot-t2i-service only applies a viewport when both
+            # dimensions are set. Keep height tiny so full_page crops to content.
+            "viewport_height": MIN_VIEWPORT_HEIGHT,
         }
 
+    async def render_dynamic(self, payload: RenderPayload, style: str | None = None):
+        """
+        将渲染数据字典渲染成最终图片。
+        这是该类的主要入口方法。
+        """
         tmpl = self.get_template(style)
+        options = self._build_screenshot_options(tmpl)
         context = payload.to_template_context()
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
