@@ -14,6 +14,7 @@ LOGO_PATH = _asset_path("Astrbot.png")
 BANNER_PATH = _asset_path("banner.png")
 BV = r"(?:\?.*)?(?:https?:\/\/)?(?:www\.)?(?:bilibili\.com\/video\/(BV[a-zA-Z0-9]+)|b23\.tv\/([a-zA-Z0-9]+))\/?(?:\?.*)?|BV[a-zA-Z0-9]+"
 VALID_FILTER_TYPES = {
+    "ad",
     "forward",
     "lottery",
     "video",

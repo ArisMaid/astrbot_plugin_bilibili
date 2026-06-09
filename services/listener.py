@@ -44,6 +44,60 @@ GROUP_MESSAGE_TYPE = "GroupMessage"
 MIN_AT_ALL_REMAINING = 1
 SECONDS_PER_MINUTE = 60
 SECONDS_PER_HOUR = 3600
+AD_TAG_KEYWORDS = ("广告", "推广", "赞助", "商单", "带货")
+AD_DIRECT_PATTERNS = (
+    r"领取优惠券",
+    r"优惠券",
+    r"购买(?:链接|地址|入口|方式)?",
+    r"(?:点击|戳|前往).{0,8}(?:购买|下单|领券)",
+    r"(?:下单|入手).{0,8}(?:链接|地址|入口)",
+    r"到手价",
+    r"限时(?:优惠|折扣|特惠)",
+    r"(?:淘宝|天猫|京东|拼多多|当当|会员购|小黄车|旗舰店|店铺)",
+)
+AD_PRODUCT_PATTERNS = (
+    r"画集",
+    r"设定集",
+    r"资料设定集",
+    r"官方小说",
+    r"周边",
+    r"手办",
+    r"立牌",
+    r"挂件",
+    r"徽章",
+    r"海报",
+    r"色纸",
+    r"谷子",
+    r"商品",
+    r"特典",
+)
+AD_SALE_PATTERNS = (
+    r"热售中?",
+    r"热卖中?",
+    r"开售",
+    r"发售",
+    r"预售",
+    r"现货",
+    r"售完不补",
+    r"限量(?:版|特典)?",
+    r"折扣",
+    r"满减",
+    r"包邮",
+    r"下单",
+    r"购买",
+)
+ADDITIONAL_AD_TYPES = {"ADDITIONAL_TYPE_GOODS"}
+AD_MARKER_KEYS = {
+    "ad",
+    "ad_ctx",
+    "ad_info",
+    "ad_mark",
+    "ad_source_content",
+    "advertise",
+    "advertisement",
+    "promotion",
+    "goods",
+}
 
 
 class DynamicListener:
@@ -955,6 +1009,86 @@ class DynamicListener:
 
         return False
 
+    @staticmethod
+    def _iter_text_values(value: Any):
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                yield text
+            return
+        if isinstance(value, dict):
+            for child in value.values():
+                yield from DynamicListener._iter_text_values(child)
+            return
+        if isinstance(value, list):
+            for child in value:
+                yield from DynamicListener._iter_text_values(child)
+
+    @staticmethod
+    def _has_ad_structural_marker(value: Any) -> bool:
+        if isinstance(value, dict):
+            item_type = value.get("type")
+            if item_type in ADDITIONAL_AD_TYPES:
+                return True
+            for key, child in value.items():
+                key_lower = str(key).lower()
+                if key_lower in AD_MARKER_KEYS:
+                    return True
+                if key_lower.startswith("ad_") or key_lower.endswith("_ad"):
+                    return True
+                if "advert" in key_lower or "promotion" in key_lower:
+                    return True
+                if DynamicListener._has_ad_structural_marker(child):
+                    return True
+            return False
+        if isinstance(value, list):
+            return any(
+                DynamicListener._has_ad_structural_marker(child) for child in value
+            )
+        return False
+
+    @staticmethod
+    def _has_pattern(patterns: tuple[str, ...], text: str) -> bool:
+        return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
+
+    def _is_ad_dynamic(self, item: Dict[str, Any]) -> bool:
+        modules = item.get("modules", {})
+        module_dynamic = modules.get("module_dynamic", {})
+        module_tag = modules.get("module_tag", {})
+        tag_text = str(module_tag.get("text") or "")
+        if tag_text and any(keyword in tag_text for keyword in AD_TAG_KEYWORDS):
+            return True
+
+        ad_sources = [module_dynamic.get("additional")]
+        if item.get("orig"):
+            ad_sources.append(
+                item.get("orig", {})
+                .get("modules", {})
+                .get("module_dynamic", {})
+                .get("additional")
+            )
+        if any(
+            source and self._has_ad_structural_marker(source) for source in ad_sources
+        ):
+            return True
+
+        text_sources = [module_dynamic]
+        if item.get("orig"):
+            text_sources.append(
+                item.get("orig", {})
+                .get("modules", {})
+                .get("module_dynamic", {})
+            )
+        text = "\n".join(self._iter_text_values(text_sources))
+        if not text:
+            return False
+
+        if self._has_pattern(AD_DIRECT_PATTERNS, text):
+            return True
+        return self._has_pattern(AD_PRODUCT_PATTERNS, text) and self._has_pattern(
+            AD_SALE_PATTERNS, text
+        )
+
     def _parse_and_filter_dynamics(
         self, dyn: Dict[str, Any], data: SubscriptionRecord
     ) -> List[DynamicParseResult]:
@@ -972,6 +1106,11 @@ class DynamicListener:
         for item in items:
             dyn_id = item["id_str"]
             item_type = item.get("type")
+
+            if "ad" in filter_types and self._is_ad_dynamic(item):
+                logger.info(f"广告动态 {dyn_id} 在过滤列表 {filter_types} 中。")
+                result_list.append(DynamicParseResult.skip(dyn_id, "ad"))
+                continue
 
             if item_type == "DYNAMIC_TYPE_FORWARD":
                 result = self._handle_forward_dynamic(

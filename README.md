@@ -60,6 +60,7 @@ plugin i https://github.com/Soulter/astrbot_plugin_bilibili
 过滤器可以是以下几种类型：
 
   - `forward`：过滤掉转发动态。
+  - `ad`：过滤掉疑似广告/推广动态（如商品卡、优惠券、购买链接、周边画集热售等）。
   - `lottery`：过滤掉互动抽奖动态。
   - `video`：过滤掉视频发布动态。
   - `article`：过滤掉专栏动态。
@@ -70,9 +71,9 @@ plugin i https://github.com/Soulter/astrbot_plugin_bilibili
   - **正则表达式**：任何不属于上述关键字的字符串都将被视为正则表达式，用于过滤动态文本内容。
 
 **示例**：
-`/订阅动态 123456 lottery 关注`
-`/bili_sub 123456 lottery 关注`
-这条指令会订阅 UID 为 `123456` 的 UP 主，但会过滤掉**抽奖动态**以及动态内容中包含“**关注**”二字的动态。
+`/订阅动态 123456 ad lottery 关注`
+`/bili_sub 123456 ad lottery 关注`
+这条指令会订阅 UID 为 `123456` 的 UP 主，但会过滤掉**广告动态**、**抽奖动态**以及动态内容中包含“**关注**”二字的动态。
 
 > **提示**：该指令也用于更新已订阅 UP 主的过滤条件。
 
