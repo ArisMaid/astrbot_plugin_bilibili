@@ -16,7 +16,7 @@ from astrbot.core.agent.message import (
 )
 
 from ..bili_client import BiliClient
-from ..core.constant import BANNER_PATH, LOGO_PATH, VALID_FILTER_TYPES
+from ..core.constant import BANNER_PATH, LOGO_PATH
 from ..core.data_manager import DataManager
 from ..core.models import DynamicParseResult, RenderPayload, SubscriptionRecord
 from ..core.utils import (
@@ -98,6 +98,13 @@ AD_MARKER_KEYS = {
     "promotion",
     "goods",
 }
+DEFAULT_GLOBAL_FILTER_REGEX = "\n".join(
+    [
+        r"(?:领取|领)(?:优惠券|券)|优惠券|到手价|限时(?:优惠|折扣|特惠)|(?:点击|戳|前往)[\s\S]{0,12}(?:购买|下单|领券)|(?:购买|下单|入手)[\s\S]{0,12}(?:链接|地址|入口|方式)|(?:淘宝|天猫|京东|拼多多|当当|会员购|小黄车|旗舰店|店铺|桃宝)",
+        r"(?:\d+(?:\.\d+)?元(?:到手|入手)?|\d+(?:\.\d+)?折|满\d+减\d+|包邮|福利|薅)[\s\S]{0,40}(?:下单|购买|入手|冲|旗舰店|店铺|补贴|好价|优惠|折扣)",
+        r"(?:画集|设定集|资料设定集|官方小说|周边|手办|立牌|挂件|徽章|海报|色纸|谷子|特典|商品)[\s\S]{0,40}(?:热售中?|热卖中?|开售|发售|预售|现货|售完不补|限量(?:版|特典)?|折扣|满减|包邮|下单|购买)",
+    ]
+)
 
 
 class DynamicListener:
@@ -127,11 +134,8 @@ class DynamicListener:
             cfg.get("send_link", cfg.get("send_link_with_image", True))
         )
         self.enable_global_filter = bool(cfg.get("enable_global_filter", False))
-        self.global_filter_types = self._parse_global_filter_types(
-            cfg.get("global_filter_types", "")
-        )
         self.global_filter_regex = self._parse_global_filter_regex(
-            cfg.get("global_filter_regex", "")
+            cfg.get("global_filter_regex") or DEFAULT_GLOBAL_FILTER_REGEX
         )
         self.dynamic_limit = cfg.get("dynamic_limit", 5)
         self.render_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
@@ -155,55 +159,44 @@ class DynamicListener:
         return result
 
     @classmethod
-    def _split_config_values(cls, value: Any, split_inline: bool) -> List[str]:
+    def _split_config_lines(cls, value: Any) -> List[str]:
         if value is None:
             return []
         if isinstance(value, (list, tuple, set)):
             result: List[str] = []
             for item in value:
-                result.extend(cls._split_config_values(item, split_inline))
+                result.extend(cls._split_config_lines(item))
             return result
 
         text = str(value).strip()
         if not text:
             return []
 
-        if split_inline:
-            return [
-                part.strip()
-                for part in re.split(r"[\s,，;；]+", text)
-                if part.strip()
-            ]
-
         return [line.strip() for line in text.splitlines() if line.strip()]
 
     @classmethod
-    def _parse_global_filter_types(cls, value: Any) -> List[str]:
-        filter_types: List[str] = []
-        for item in cls._split_config_values(value, split_inline=True):
-            if item not in VALID_FILTER_TYPES:
-                logger.warning(f"忽略无效的全局过滤类型: {item}")
-                continue
-            filter_types.append(item)
-        return cls._dedupe_preserve_order(filter_types)
-
-    @classmethod
     def _parse_global_filter_regex(cls, value: Any) -> List[str]:
-        return cls._dedupe_preserve_order(
-            cls._split_config_values(value, split_inline=False)
-        )
+        return cls._dedupe_preserve_order(cls._split_config_lines(value))
 
     def _effective_filter_types(self, filter_types: List[str]) -> List[str]:
-        base_types = self._dedupe_preserve_order(filter_types or [])
-        if not self.enable_global_filter:
-            return base_types
-        return self._dedupe_preserve_order(base_types + self.global_filter_types)
+        return self._dedupe_preserve_order(filter_types or [])
 
     def _effective_filter_regex(self, filter_regex: List[str]) -> List[str]:
-        base_regex = self._dedupe_preserve_order(filter_regex or [])
+        return self._dedupe_preserve_order(filter_regex or [])
+
+    def _effective_global_filter_regex(self) -> List[str]:
         if not self.enable_global_filter:
-            return base_regex
-        return self._dedupe_preserve_order(base_regex + self.global_filter_regex)
+            return []
+        return self.global_filter_regex
+
+    def _build_global_filter_text(self, item: Dict[str, Any]) -> str:
+        modules = item.get("modules", {})
+        text_sources = [modules.get("module_dynamic", {})]
+        if item.get("orig"):
+            text_sources.append(
+                item.get("orig", {}).get("modules", {}).get("module_dynamic", {})
+            )
+        return "\n".join(self._iter_text_values(text_sources))
 
     async def start(self):
         """启动后台监听循环（按 UID 任务池调度）。"""
@@ -1167,6 +1160,7 @@ class DynamicListener:
         """
         filter_types = self._effective_filter_types(data.filter_types)
         filter_regex = self._effective_filter_regex(data.filter_regex)
+        global_filter_regex = self._effective_global_filter_regex()
         uid = str(data.uid)
         items = self._get_dynamic_items(dyn, data)  # 不含last及置顶的动态列表
         result_list: List[DynamicParseResult] = []
@@ -1176,6 +1170,14 @@ class DynamicListener:
         for item in items:
             dyn_id = item["id_str"]
             item_type = item.get("type")
+
+            if self._match_filter_regex(
+                self._build_global_filter_text(item),
+                global_filter_regex,
+                f"动态 {dyn_id} 命中全局过滤正则 {{regex_pattern}}。",
+            ):
+                result_list.append(DynamicParseResult.skip(dyn_id, "global_regex"))
+                continue
 
             if "ad" in filter_types and self._is_ad_dynamic(item):
                 logger.info(f"广告动态 {dyn_id} 在过滤列表 {filter_types} 中。")
