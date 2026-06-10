@@ -76,6 +76,7 @@ plugin i https://github.com/Soulter/astrbot_plugin_bilibili
 这条指令会订阅 UID 为 `123456` 的 UP 主，但会过滤掉**广告动态**、**抽奖动态**以及动态内容中包含“**关注**”二字的动态。
 
 > **提示**：该指令也用于更新已订阅 UP 主的过滤条件。
+> 也可以在插件配置中开启 `enable_global_filter` 并编辑 `global_filter_types` / `global_filter_regex`，全局过滤规则会对所有订阅生效，并与单个订阅的过滤器叠加。
 
 ## 适用平台/适配器
 

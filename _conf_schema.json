@@ -55,6 +55,24 @@
         "hint": "是否在动态与直播推送中发送相关链接。可与图片渲染推送开关独立组合。",
         "default": true
     },
+    "enable_global_filter": {
+        "description": "enable_global_filter",
+        "type": "bool",
+        "hint": "是否启用全局过滤器。开启后会对全部订阅生效，并与单个订阅的过滤规则叠加。",
+        "default": false
+    },
+    "global_filter_types": {
+        "description": "global_filter_types",
+        "type": "text",
+        "hint": "全局过滤类型，支持 ad、forward、lottery、video、article、draw、live、forward_lottery。可用换行、空格、逗号或分号分隔。",
+        "default": ""
+    },
+    "global_filter_regex": {
+        "description": "global_filter_regex",
+        "type": "text",
+        "hint": "全局过滤正则，每行一条。开启全局过滤器后，对所有订阅的动态文本生效。",
+        "default": ""
+    },
     "node": {
         "description": "node",
         "type": "bool",

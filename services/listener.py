@@ -16,7 +16,7 @@ from astrbot.core.agent.message import (
 )
 
 from ..bili_client import BiliClient
-from ..core.constant import BANNER_PATH, LOGO_PATH
+from ..core.constant import BANNER_PATH, LOGO_PATH, VALID_FILTER_TYPES
 from ..core.data_manager import DataManager
 from ..core.models import DynamicParseResult, RenderPayload, SubscriptionRecord
 from ..core.utils import (
@@ -126,6 +126,13 @@ class DynamicListener:
         self.send_link = bool(
             cfg.get("send_link", cfg.get("send_link_with_image", True))
         )
+        self.enable_global_filter = bool(cfg.get("enable_global_filter", False))
+        self.global_filter_types = self._parse_global_filter_types(
+            cfg.get("global_filter_types", "")
+        )
+        self.global_filter_regex = self._parse_global_filter_regex(
+            cfg.get("global_filter_regex", "")
+        )
         self.dynamic_limit = cfg.get("dynamic_limit", 5)
         self.render_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self.render_cache_limit = int(cfg.get("render_cache_limit", 32))
@@ -135,6 +142,68 @@ class DynamicListener:
         ).strip()
         self.enable_ai_summary = bool(cfg.get("enable_ai_summary", False))
         self.ai_summary_prompt = (cfg.get("ai_summary_prompt", "") or "").strip()
+
+    @staticmethod
+    def _dedupe_preserve_order(values: List[str]) -> List[str]:
+        result: List[str] = []
+        seen = set()
+        for value in values or []:
+            if value in seen:
+                continue
+            seen.add(value)
+            result.append(value)
+        return result
+
+    @classmethod
+    def _split_config_values(cls, value: Any, split_inline: bool) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple, set)):
+            result: List[str] = []
+            for item in value:
+                result.extend(cls._split_config_values(item, split_inline))
+            return result
+
+        text = str(value).strip()
+        if not text:
+            return []
+
+        if split_inline:
+            return [
+                part.strip()
+                for part in re.split(r"[\s,，;；]+", text)
+                if part.strip()
+            ]
+
+        return [line.strip() for line in text.splitlines() if line.strip()]
+
+    @classmethod
+    def _parse_global_filter_types(cls, value: Any) -> List[str]:
+        filter_types: List[str] = []
+        for item in cls._split_config_values(value, split_inline=True):
+            if item not in VALID_FILTER_TYPES:
+                logger.warning(f"忽略无效的全局过滤类型: {item}")
+                continue
+            filter_types.append(item)
+        return cls._dedupe_preserve_order(filter_types)
+
+    @classmethod
+    def _parse_global_filter_regex(cls, value: Any) -> List[str]:
+        return cls._dedupe_preserve_order(
+            cls._split_config_values(value, split_inline=False)
+        )
+
+    def _effective_filter_types(self, filter_types: List[str]) -> List[str]:
+        base_types = self._dedupe_preserve_order(filter_types or [])
+        if not self.enable_global_filter:
+            return base_types
+        return self._dedupe_preserve_order(base_types + self.global_filter_types)
+
+    def _effective_filter_regex(self, filter_regex: List[str]) -> List[str]:
+        base_regex = self._dedupe_preserve_order(filter_regex or [])
+        if not self.enable_global_filter:
+            return base_regex
+        return self._dedupe_preserve_order(base_regex + self.global_filter_regex)
 
     async def start(self):
         """启动后台监听循环（按 UID 任务池调度）。"""
@@ -230,7 +299,8 @@ class DynamicListener:
             dyn = None
 
         should_check_live = any(
-            "live" not in sub_data.filter_types for _, sub_data in targets
+            "live" not in self._effective_filter_types(sub_data.filter_types)
+            for _, sub_data in targets
         )
         live_room = None
         if should_check_live:
@@ -294,7 +364,7 @@ class DynamicListener:
                     )
 
         # 检查直播状态
-        if "live" in sub_data.filter_types:
+        if "live" in self._effective_filter_types(sub_data.filter_types):
             return
 
         if live_room is None and not shared_payload:
@@ -1095,8 +1165,8 @@ class DynamicListener:
         """
         解析并过滤动态。
         """
-        filter_types = data.filter_types
-        filter_regex = data.filter_regex
+        filter_types = self._effective_filter_types(data.filter_types)
+        filter_regex = self._effective_filter_regex(data.filter_regex)
         uid = str(data.uid)
         items = self._get_dynamic_items(dyn, data)  # 不含last及置顶的动态列表
         result_list: List[DynamicParseResult] = []
